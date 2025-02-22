@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tremaux's Maze Solver</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+        }
+        .controls {
+            margin: 20px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        canvas {
+            border: 2px solid #333;
+            background-color: white;
+        }
+    </style>
+</head>
+<body>
+    <h1>Trémaux's Maze Solver</h1>
+    <div class="controls">
+        <button onclick="startSolving()">Start Solving</button>
+        <button onclick="generateNewMaze()">New Maze</button>
+    </div>
+    <canvas id="mazeCanvas" width="600" height="600"></canvas>
+
+    <script>
+        const canvas = document.getElementById('mazeCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        const CELL_SIZE = 30;
+        const COLS = Math.floor(canvas.width / CELL_SIZE);
+        const ROWS = Math.floor(canvas.height / CELL_SIZE);
+        const WALL_WIDTH = 3;
+        
+        class Cell {
+            constructor(row, col) {
+                this.row = row;
+                this.col = col;
+                this.walls = {
+                    top: true,
+                    right: true,
+                    bottom: true,
+                    left: true
+                };
+                this.marks = {
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                    left: 0
+                };
+                this.visited = false;
+            }
+
+            getOppositeDirection(dir) {
+                return {
+                    top: 'bottom',
+                    right: 'left',
+                    bottom: 'top',
+                    left: 'right'
+                }[dir];
+            }
+        }
+
+        class PathFinder {
+            constructor(maze) {
+                this.maze = maze;
+                this.currentCell = maze.grid[0][0];
+                this.prevCell = null;
+                this.entryDir = null;
+                this.done = false;
+                this.path = [this.currentCell];
+            }
+
+            isJunction(cell) {
+                let openPaths = 0;
+                for (const [dir, hasWall] of Object.entries(cell.walls)) {
+                    if (!hasWall) openPaths++;
+                }
+                return openPaths > 2;
+            }
+
+            getAvailableDirections() {
+                const directions = [];
+                const {row, col} = this.currentCell;
+
+                if (!this.currentCell.walls.top && row > 0) directions.push('top');
+                if (!this.currentCell.walls.right && col < COLS-1) directions.push('right');
+                if (!this.currentCell.walls.bottom && row < ROWS-1) directions.push('bottom');
+                if (!this.currentCell.walls.left && col > 0) directions.push('left');
+
+                return directions;
+            }
+
+            getNextCell(dir) {
+                const {row, col} = this.currentCell;
+                switch(dir) {
+                    case 'top': return this.maze.grid[row-1][col];
+                    case 'right': return this.maze.grid[row][col+1];
+                    case 'bottom': return this.maze.grid[row+1][col];
+                    case 'left': return this.maze.grid[row][col-1];
+                }
+            }
+
+            step() {
+                if (this.done) return false;
+                
+                // Check if we reached the target
+                if (this.currentCell === this.maze.grid[ROWS-1][COLS-1]) {
+                    this.done = true;
+                    return false;
+                }
+
+                const availableDirections = this.getAvailableDirections();
+                const currentIsJunction = this.isJunction(this.currentCell);
+
+                // Choose next direction based on Trémaux's rules
+                let nextDir;
+                
+                // Filter out directions based on marks
+                const unmarkedPaths = availableDirections.filter(dir => 
+                    this.currentCell.marks[dir] === 0
+                );
+                
+                const singleMarkedPaths = availableDirections.filter(dir => 
+                    this.currentCell.marks[dir] === 1
+                );
+
+                if (unmarkedPaths.length > 0) {
+                    // Prefer unmarked paths
+                    nextDir = unmarkedPaths[Math.floor(Math.random() * unmarkedPaths.length)];
+                } else if (singleMarkedPaths.length > 0) {
+                    // Take a path marked once if no unmarked paths
+                    nextDir = singleMarkedPaths[0];
+                } else {
+                    // All paths marked twice, backtrack
+                    nextDir = this.entryDir;
+                }
+
+                // Mark the path we're taking
+                if (nextDir) {
+                    // Mark current cell's exit
+                    this.currentCell.marks[nextDir]++;
+                    
+                    // Mark next cell's entry
+                    const nextCell = this.getNextCell(nextDir);
+                    const oppositeDir = this.currentCell.getOppositeDirection(nextDir);
+                    nextCell.marks[oppositeDir]++;
+
+                    // Move to next cell
+                    this.prevCell = this.currentCell;
+                    this.currentCell = nextCell;
+                    this.entryDir = oppositeDir;
+                    this.path.push(this.currentCell);
+                }
+
+                return true;
+            }
+        }
+
+        class Maze {
+            constructor() {
+                this.grid = [];
+                this.pathFinder = null;
+                
+                // Initialize grid
+                for (let row = 0; row < ROWS; row++) {
+                    this.grid[row] = [];
+                    for (let col = 0; col < COLS; col++) {
+                        this.grid[row][col] = new Cell(row, col);
+                    }
+                }
+                
+                this.generateMaze();
+            }
+
+            generateMaze() {
+                const stack = [];
+                let current = this.grid[0][0];
+                current.visited = true;
+
+                while (true) {
+                    const unvisitedNeighbors = this.getUnvisitedNeighbors(current);
+
+                    if (unvisitedNeighbors.length > 0) {
+                        const next = unvisitedNeighbors[
+                            Math.floor(Math.random() * unvisitedNeighbors.length)
+                        ];
+                        stack.push(current);
+                        this.removeWall(current, next);
+                        current = next;
+                        current.visited = true;
+                    } else if (stack.length > 0) {
+                        current = stack.pop();
+                    } else {
+                        break;
+                    }
+                }
+
+                // Reset visited flags
+                for (let row = 0; row < ROWS; row++) {
+                    for (let col = 0; col < COLS; col++) {
+                        this.grid[row][col].visited = false;
+                    }
+                }
+            }
+
+            getUnvisitedNeighbors(cell) {
+                const neighbors = [];
+                const {row, col} = cell;
+
+                if (row > 0 && !this.grid[row-1][col].visited)
+                    neighbors.push(this.grid[row-1][col]);
+                if (col < COLS-1 && !this.grid[row][col+1].visited)
+                    neighbors.push(this.grid[row][col+1]);
+                if (row < ROWS-1 && !this.grid[row+1][col].visited)
+                    neighbors.push(this.grid[row+1][col]);
+                if (col > 0 && !this.grid[row][col-1].visited)
+                    neighbors.push(this.grid[row][col-1]);
+
+                return neighbors;
+            }
+
+            removeWall(cell1, cell2) {
+                const row1 = cell1.row;
+                const col1 = cell1.col;
+                const row2 = cell2.row;
+                const col2 = cell2.col;
+
+                if (row1 < row2) {
+                    cell1.walls.bottom = false;
+                    cell2.walls.top = false;
+                } else if (row1 > row2) {
+                    cell1.walls.top = false;
+                    cell2.walls.bottom = false;
+                } else if (col1 < col2) {
+                    cell1.walls.right = false;
+                    cell2.walls.left = false;
+                } else {
+                    cell1.walls.left = false;
+                    cell2.walls.right = false;
+                }
+            }
+
+            draw() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                for (let row = 0; row < ROWS; row++) {
+                    for (let col = 0; col < COLS; col++) {
+                        const cell = this.grid[row][col];
+                        const x = col * CELL_SIZE;
+                        const y = row * CELL_SIZE;
+
+                        // Draw cell background
+                        if (this.pathFinder && cell === this.pathFinder.currentCell) {
+                            ctx.fillStyle = '#90EE90';  // Light green for current cell
+                            ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+                        }
+
+                        // Draw path marks
+                        const midX = x + CELL_SIZE/2;
+                        const midY = y + CELL_SIZE/2;
+                        
+                        Object.entries(cell.marks).forEach(([dir, count]) => {
+                            if (count > 0 && !cell.walls[dir]) {
+                                ctx.strokeStyle = count === 1 ? '#FFA500' : '#FF4444';
+                                ctx.lineWidth = 4;
+                                ctx.beginPath();
+
+                                switch(dir) {
+                                    case 'top':
+                                        ctx.moveTo(midX, midY);
+                                        ctx.lineTo(midX, y);
+                                        break;
+                                    case 'right':
+                                        ctx.moveTo(midX, midY);
+                                        ctx.lineTo(x + CELL_SIZE, midY);
+                                        break;
+                                    case 'bottom':
+                                        ctx.moveTo(midX, midY);
+                                        ctx.lineTo(midX, y + CELL_SIZE);
+                                        break;
+                                    case 'left':
+                                        ctx.moveTo(midX, midY);
+                                        ctx.lineTo(x, midY);
+                                        break;
+                                }
+                                ctx.stroke();
+                            }
+                        });
+
+                        // Draw walls
+                        ctx.strokeStyle = '#000';
+                        ctx.lineWidth = WALL_WIDTH;
+                        
+                        if (cell.walls.top) {
+                            ctx.beginPath();
+                            ctx.moveTo(x, y);
+                            ctx.lineTo(x + CELL_SIZE, y);
+                            ctx.stroke();
+                        }
+                        if (cell.walls.right) {
+                            ctx.beginPath();
+                            ctx.moveTo(x + CELL_SIZE, y);
+                            ctx.lineTo(x + CELL_SIZE, y + CELL_SIZE);
+                            ctx.stroke();
+                        }
+                    }
+                }
+
+                // Draw bottom and right walls
+                ctx.beginPath();
+                ctx.moveTo(0, canvas.height);
+                ctx.lineTo(canvas.width, canvas.height);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(canvas.width, 0);
+                ctx.lineTo(canvas.width, canvas.height);
+                ctx.stroke();
+
+                // Draw entrance and exit
+                ctx.fillStyle = '#4CAF50';
+                ctx.fillRect(2, 2, CELL_SIZE - 4, CELL_SIZE - 4);
+                ctx.fillStyle = '#FF4444';
+                ctx.fillRect(
+                    (COLS - 1) * CELL_SIZE + 2,
+                    (ROWS - 1) * CELL_SIZE + 2,
+                    CELL_SIZE - 4,
+                    CELL_SIZE - 4
+                );
+            }
+        }
+
+        let maze = null;
+        let animationId = null;
+
+        function animate() {
+            if (maze.pathFinder && maze.pathFinder.step()) {
+                maze.draw();
+                animationId = requestAnimationFrame(animate);
+            } else {
+                maze.draw();
+            }
+        }
+
+        function startSolving() {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            maze.pathFinder = new PathFinder(maze);
+            requestAnimationFrame(animate);
+        }
+
+        function generateNewMaze() {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            maze = new Maze();
+            maze.draw();
+        }
+
+        // Generate initial maze
+        generateNewMaze();
+    </script>
+</body>
+</html>
